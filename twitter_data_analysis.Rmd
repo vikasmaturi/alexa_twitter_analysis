@@ -1,0 +1,529 @@
+---
+title: "Twitter_Analysis"
+author: "Vikas"
+date: "June 25, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#Libraries
+library(tidyverse)
+library(lubridate)
+library(stringr)
+#Parameters 
+
+#raw scraped twitter data
+file_path_raw <- "C:/Users/Vikas Maturi/Documents/Designit/Twitter_Data/amazonecho_tweets.csv"
+
+#Filtered original tweet and retweet data (saving for csv modification)
+og_rt_raw <- "C:/Users/Vikas Maturi/Documents/Designit/Twitter_Data/amazonecho_og_rt_tweets.csv"
+
+#Classified raw data
+file_path_classified_raw <- "C:/Users/Vikas Maturi/Documents/Designit/Twitter_Data/amazonecho_tweets_classified.csv"
+
+#Retweets only (save file path)
+
+
+#Original tweets only (save file path)
+
+#Alexa command tweets only
+
+
+```
+
+## Read in raw data
+
+This is not executed during a run of the program; this step is preparatory
+
+```{r eval = FALSE}
+twitter_raw <- read_csv(file_path_raw)
+
+```
+
+
+## Save raw data (filtered for original tweets and retweets) to file for further classification
+
+This is not executed during a run of the program; this step is preparatory
+```{r eval = FALSE}
+wanted_tweets <-
+  twitter_raw %>% 
+  filter(!str_detect(text, "^@")) %>% 
+  filter(!str_detect(text, "\\.@")) %>% 
+  filter(str_detect(text, "Alexa"))
+
+write_csv(wanted_tweets, og_rt_raw)
+```
+
+## Read in classified data (by topic and action)
+
+There are 501 tweets or retweets from Amazon Echo that directly discuss Alexa's capabilites between 05/29/2015 and 6/21/2018, as determined by the filtering in the previous step. Each of these tweets was categorized by the general topic of the tweet, and the kind of action that it discusses.
+
+The categorization structure is included here:
+
+Topic	
+Entertainment:	Related to music, movies, pop culture, etc.
+Social: 	Related to talking/spending time with others
+Productivity:	Related to small or large increases in productivity, including access to information
+Promotional:	Related to promoting the Amazon brand (also a catch-all for posts not related to the other 4 topics)
+Digital_Lifestyle:	Related to Amazon integrated in general lifestyle or day-to-day products (cars, smoke alarms, lighting, etc.)
+	
+	
+Action	
+Purchase:	Related to using Alexa for shopping/purchasing
+IoT:	Related to the Internet of Things integrated hardware with Alexa, including transportation, lights, etc.
+Basic:	Related to a basic, non-IoT function (alarms, calendar, scheduling, etc)
+Customization:	Related to a specific skill customzation/ability done by the user with Alexa
+Trivial:	Related to a trivial/unimportant Alexa ability, or a one-time programmed ability for a promotional reason
+Communication:	Related to assisting with calls/texts/other forms of person-to-person communication
+Streaming:	Related specifically to streaming music or other audio
+```{r}
+raw_categorized <- 
+  read_csv(file_path_classified_raw) 
+
+```
+
+
+
+
+## Save several datasets that we are interested in
+
+```{r}
+rt_specified <-
+  raw_categorized %>% 
+  mutate(rt = if_else(str_detect(text, "^RT"), TRUE, FALSE))
+
+
+```
+
+
+## Exploratory Data Analysis of Traction
+
+```{r}
+rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  ggplot(aes(x = created_at, y = favorite_count)) +
+  geom_line()
+
+rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  ggplot(aes(x = created_at, y = retweet_count)) +
+  geom_line()
+```
+In this graph, we see how the favorite count has been fairly steady over time (potentially a slight average increase), but with a few strangely massive spikes. The retweet graph almost mirrors the same spikes, except for an outlier value in late 2017. This leads us to investigate: 
+
+1. The cause of the spikes in favorite count
+```{r}
+
+spikes <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(favorite_count > 250) %>% 
+  arrange(desc(favorite_count))
+
+spikes %>% knitr::kable()
+spikes %>% 
+  group_by(topic) %>% 
+  count()
+spikes %>% 
+  group_by(action) %>% 
+  count()
+```
+The highest-traction tweets were all promotional in nature, and primaily related to "trivial" actions (which includes non-actions or actions catered specifically to a promotional tweet). We see that some surround a notable event (for example, the highest traction tweet around the superbowl after the popular Amazon ad) while others appear more random (Petlexa, for example). 
+
+
+2. The cause of the strange spike in retweet count not found in the favorite account. 
+```{r}
+retweet_outlier <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(retweet_count > 750) %>% 
+  arrange(desc(retweet_count))
+
+retweet_outlier %>% knitr::kable()
+```
+
+
+
+This was a light-up gingerbread house controlled by Alexa - it was definitely cool, but surprising that it generated so much traction in retweets but not favorites - it suggests that the lighting company likely retweeted to a stronger group of followers.
+
+
+
+
+
+3. If the average (excluding these spikes) has substantially increased over time
+```{r}
+no_spike_avg <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(favorite_count < 250) %>% 
+  group_by(quarter = floor_date(created_at, "3 months")) %>% 
+  summarize(avg = mean(favorite_count)) %>% 
+  ggplot(aes(x = quarter, y = avg)) +
+  geom_line() +
+  geom_smooth(se = 0) + 
+  scale_x_datetime(date_breaks = "3 months", date_labels = "%b %d")
+
+no_spike_avg
+```
+
+We do see that the average number of favorites has steadily increased over the account's inception, yet remains surprisingly low considering the widespread usage of Echo. We see that it has only raised from 20 to 60 over two years, essentially nothing for an organization of this size (however, again excluding the outliers of large-traction tweets beyond the margin of error)
+
+
+4. Number of tweets over time
+```{r}
+
+tweets_over_time <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  group_by(quarter = floor_date(created_at, "3 months")) %>%
+  count() %>% 
+  filter(quarter <= as_datetime("2018-04-01")) %>% 
+  ggplot(aes(x = quarter, y = n)) +
+  geom_line() +
+  scale_x_datetime(date_breaks = "3 months", date_labels = "%b %Y")
+
+tweets_over_time
+
+```
+
+Over the span over the last three years, we see a consistent downward trend in the average number of tweets released by the Amazon Echo account. This suggests that Twitter is somehow losing steam as an effective advertising platform. 
+
+
+
+## Exploratory Data Analysis of Tweet Content
+
+
+First, we want to explore how tweet topics have varied over time.
+```{r}
+topic_count <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(!is.na(topic)) %>% 
+  group_by(
+    quarter = floor_date(created_at, "4 months"),
+    topic
+  ) %>% 
+  count(topic) %>% 
+  ggplot(aes(x = quarter, y = n)) +
+  geom_line(aes(group = topic, color = topic)) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Number of tweets by topic over time",
+    caption = "Data from @amazonecho twitter account",
+    x = "Date",
+    y = "Tweet Count",
+    color = "Topic of Tweet"
+  )
+
+topic_count
+
+```
+
+There are a few unique trends that we see here:
+
+* Over time, there has been a sharp decrease in the RAW NUMBER of promotional tweets
+* We are also seeing what appears to be an overall downward trend over time in the raw number of tweets
+
+
+However, it is hard to draw too many conclusions comparatively between topics, as this does not account for the steady decrease in original tweeting we have seen over time. 
+
+
+
+
+Thus, our next analysis investgates the relative proportions of these tweets over time
+
+```{r}
+topic_prop <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(!is.na(topic)) %>% 
+  group_by(
+    topic,
+    quarter = floor_date(created_at, "4 months")
+  ) %>% 
+  count(topic) %>%
+  group_by(quarter) %>% 
+  mutate(percent = n / sum(n)) %>% 
+  ggplot(aes(x = quarter, y = percent)) +
+  geom_line(aes(group = topic, color = topic)) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "Date",
+    y = "Proportion of Tweets",
+    color = "Topic of Tweet",
+    title = "Proportion of tweets by topic over time (4-month blocks)",
+    caption = "Data from @amazonecho Twitter feed"
+  )
+
+topic_prop
+```
+
+This tells us slightly more about the relative topics of tweets over time:
+
+* Promotional tweets have decreased in proportion over time, with entertainment and digital lifestyle tweets rising in their place. This certainly suggests increased, more interesting/advertisable functionality with Alexa over time. 
+* Socially-related tweets have sharply risen recently, which focus on Alexa supporting person-to-person communications. 
+* There has been a small but noticeable decline in productivity related tweets over time, which is logical as people become more and more familiar with the basic functionality of Alexa while they introduce new items.
+* There has also been a small rise in the average digital_lifestyle tweet numbers, which is logical (Alexa will only continue to build integration into other technologies), but is not as prevalent as one might expect (considering the high monetary value of such products, albiet not a profit source for Amazon).
+
+
+
+We also want to investgate the changes in tweets over time by the action that is advertised for Alexa. 
+
+
+First, we'll look at the raw number of tweets per action over time:
+
+
+```{r}
+action_count <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(!is.na(action), action != "Shopping") %>% 
+  group_by(
+    quarter = floor_date(created_at, "4 months"),
+    action
+  ) %>% 
+  count(action) %>% 
+  ggplot(aes(x = quarter, y = n)) +
+  geom_line(aes(group = action, color = action)) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "Date",
+    y = "Number of Tweets",
+    color = "Action of Tweet",
+    title = "Number of tweets by the promoted Alexa action over time (4-month blocks)",
+    caption = "Data from @amazonecho Twitter feed"
+  )
+
+action_count
+```
+
+With this graph, we see the following: 
+
+* There is a rise, then fall, in tweets related to streaming music. This may have been to advertise the functionality when it wasn't prominent, then release it when it was more widely known.
+* Similarly, we see a rise in Tweets directly informing followers of how to make purchases (peaking in around January 2017), then falling againn  until the present, where there are very few. 
+
+
+More telling is the comparative proportions of these tweets by action over time. 
+
+```{r}
+
+action_prop <-
+  rt_specified %>% 
+  filter(rt == FALSE) %>% 
+  filter(action != "Shopping") %>% 
+  filter(!is.na(action)) %>% 
+  group_by(
+    action,
+    quarter = floor_date(created_at, "4 months")
+  ) %>% 
+  count(action) %>%
+  group_by(quarter) %>% 
+  mutate(percent = n / sum(n)) %>% 
+  ggplot(aes(x = quarter, y = percent)) +
+  geom_line(aes(group = action, color = action)) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  theme_minimal() +
+  theme(
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    x = "Date",
+    y = "Proportion of Tweets",
+    color = "Topic of Tweet",
+    title = "Proportion of tweets per advertised Alexa action over time (4-month blocks)",
+    caption = "Data from @amazonecho Twitter feed"
+  )
+
+action_prop
+```
+This chart is also somewhat revealing. 
+
+1. We see the introduction of communication related tweets more recently, when Alexa achieved the capacity to hook up with your phone more easily and call other people directly. 
+2. We see a rise in proportion of Internet of Things related tweets fairly steadily, peaking quite recently (within the last year). This makes sense, considering the rise of more integrated Alexa technologies and the value of such technologies for consumers (particularly related to lighting and transportation).
+3. We see how tweets on trivial actions or basic Alexa actions initially dominated the spectrum of tweets, but it has become largely more equally distributed among the advertised Alexa actions over the last 12 months. 
+
+
+These analyses beg the question: is the topic/action of the tweet correlated with the amount of favorites, adjusting for the period of time that the tweet was released?
+
+
+
+## Traction (Favoriting and Retweeting) by Topic and Action
+
+
+To answer this question, we will continue to categorize the tweets in groups by 4-month period, and investigate within those 4-month periods the variance in retweets and favorites. I've done this analysis excluding the high outliers (for example, superbowl related tweets are always promotional and much more heavily tweeted, which is not a good indication of general traction of promotional tweets)
+
+```{r}
+action_rt <-
+  rt_specified %>% 
+  filter(rt == FALSE, action != "Shopping", !is.na(action)) %>% 
+  filter(retweet_count < 125, favorite_count < 250) %>% 
+  group_by(
+    action,
+    quarter = floor_date(created_at, "4 months")
+  ) %>% 
+  summarize(
+    rt_avg = mean(retweet_count),
+    fav_avg = mean(favorite_count)
+  ) %>% 
+  arrange(quarter) 
+  
+
+action_rt %>% 
+  ggplot(aes(x = quarter, y = rt_avg)) +
+  geom_smooth(aes(group = action, color = action), se = FALSE) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  labs(
+    title = "Average tweet retweets by category",
+    caption = "Data from @amazonecho Twitter feed",
+    x = "Date",
+    y = "Average retweets"
+  )
+
+
+    
+```
+
+This is interesting. We see that tweets related to actions involving direct purchases with Alexa were initiall popular near their entry in 2016, but slowly moved to become the tweets with the least traction through 2017  - this may be a reason for the numerical decline of purchase-related tweets recently.
+
+Generally, the tweeets around the Internet of Things are the highest performing, with consistently high retweets. This is likely due to the fast that these tweets are always associated with another technology company and their technology, who will likely retweet this tweet. 
+
+
+
+```{r}
+action_fav <-
+  rt_specified %>% 
+  filter(rt == FALSE, action != "Shopping", !is.na(action)) %>% 
+  filter(retweet_count < 125, favorite_count < 250) %>% 
+  group_by(
+    action,
+    quarter = floor_date(created_at, "4 months")
+  ) %>% 
+  summarize(
+    rt_avg = mean(retweet_count),
+    fav_avg = mean(favorite_count)
+  ) %>% 
+  arrange(quarter) 
+  
+
+action_fav %>% 
+  ggplot(aes(x = quarter, y = fav_avg)) +
+  geom_smooth(aes(group = action, color = action), se = FALSE) +
+  theme_light() + 
+  theme(
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  labs(
+    title = "Average tweet favorites by category",
+    caption = "Data from @amazonecho Twitter feed",
+    x = "Date",
+    y = "Average favorites"
+  )
+
+    
+```
+
+The patterns for favoriting tweets are more consistent here than the retweeting patterns. We see that streaming tweets are often very popular, leading the pack through the first half of 2017. 
+IoT tweets still maintain a high favorite share as they did with the retweets, but nearly every other category: Basic, communication, customization, and trivial are at a similar space. What is particularly interesting is that again, purchase-related tweets fall to the bottom of the pack. They are consistently less favorited by a significant margin. 
+
+
+## Exploratory Data Analysis of Purchase-Related Tweets
+
+
+While may Echo tweets discuss and promote various technology products, a select few of them specifically tell the user to utilize Alexa to make the physical purchase. 
+
+Filtering the dataset to just the purchases
+```{r}
+purchases <-
+  rt_specified %>% 
+  filter(rt == FALSE, action != "Shopping") %>% 
+  filter(action == "Purchase") %>% 
+  filter(!is.na(topic))
+```
+
+
+```{r}
+purchases %>% 
+  group_by(topic) %>% 
+  count()
+```
+Purchase related tweets have generally centered on productivity (increasing the efficiency of daily tasks) or promotional (there is no larger specified topic like entertainment or digital lifestyle, it is likely something random).
+
+
+```{r}
+purchases %>% 
+  group_by(topic) %>% 
+  summarize(
+    av_fav = mean(favorite_count), 
+    av_rt = mean(retweet_count)
+  )
+```
+Interestingly, the purchases that were promotional tended to be the most successful in generating favorites and retweets
+
+```{r}
+purchases %>% 
+  filter(topic == "Promotional") %>% 
+  knitr::kable()
+```
+
+
+## Retweet Analysis
+
+```{r}
+rt_action_rt <-
+  rt_specified %>% 
+  filter(rt == TRUE, action != "Shopping", !is.na(action)) %>% 
+  filter(retweet_count < 125, favorite_count < 250) %>% 
+  group_by(
+    action,
+    quarter = floor_date(created_at, "4 months")
+  ) %>% 
+  summarize(
+    rt_avg = mean(retweet_count)
+  ) %>% 
+  arrange(quarter) 
+  
+
+rt_action_rt %>% 
+  ggplot(aes(x = quarter, y = rt_avg)) +
+  geom_smooth(aes(group = action, color = action), se = FALSE) +
+  theme_light() + 
+  theme(
+    panel.grid.minor = element_blank()
+  ) +
+  scale_x_datetime(date_breaks = "6 months", date_labels = "%b %Y")  +
+  labs(
+    title = "Average retweets of @amazonecho retweeted tweets by category over time",
+    caption = "Data from @amazonecho Twitter feed",
+    x = "Date",
+    y = "Average retweets of @amazonecho retweets "
+  )
+```
+
+
+
+I'm confused as to why the purchase retweet average is the same across several years. Is it possibly a coincidence or a data error?
+
+```{r}
+rt_specified %>% 
+  filter(rt == TRUE, action == "Purchase") %>% 
+  knitr::kable()
+```
+
+It appears that only 5 of the amazonecho retweets are related to purhcases, leading the averages to cancel out over time. 
